@@ -1,0 +1,54 @@
+---
+title: "MRI Fellows"
+author: "Radiology Analytics Team"
+date: "`r Sys.time()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(DBI)
+library(dplyr)
+library(magrittr)
+library(dbplyr)
+library(stringr)
+library(mskRmail)
+```
+
+```{r main, include=FALSE}
+rad_con <- ignyt::analytics_sql_con(NULL)
+
+mr_fellows_today <- ignyt::shift_rads("MR", "am", faculty = FALSE, con = rad_con) %>% 
+  filter(!str_detect(schedule_Names, "Resident|CT"))
+
+mr_atts_today <- prep_readers(con = rad_con) %>% 
+  filter(task_name %in% c("Body - MR am", "Body - MR pm"), !is.na(email)) %>% 
+  distinct(email, .keep_all = TRUE)
+
+DBI::dbDisconnect(rad_con)
+
+html_body <- paste0("<p> <i>This is an automated E-Mail</i> <BR><BR>These are the MR-fellows of today (CCed): ", paste(mr_fellows_today$`QGenda Name`, collapse = "; "), "<BR>MRI attendings are BCCed<BR>If you encounter any errors in this automated message, please contact XYZ (xyz@hospital.com)</p>")
+
+mr_fellows_today %<>% filter(!is.na(email))
+
+send <- mskRmail::msk_server()
+
+msg <- envelope(
+  from = "mailing_bot@hospital.com",
+  to = "central_scheduling@hospital.com",
+  cc = c(mr_fellows_today$email),
+  bcc = c(mr_atts_today$email),
+  subject = "MRI Fellows today",
+  html = html_body
+)
+
+if(lubridate::hour(Sys.time()) == 7) send(msg)
+
+```
+This page shows which fellows are assigned to MRI and emails the coordinators every morning at 7:30 am:
+
+```{r fellows, echo=FALSE}
+paste(mr_fellows_today$`QGenda Name`, collapse = "; ")
+
+paste(mr_atts_today$`QGenda Name`, collapse = "; ")
+```

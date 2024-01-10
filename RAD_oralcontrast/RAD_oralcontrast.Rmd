@@ -1,0 +1,101 @@
+---
+title: "Oral Contrast"
+author: "Radiology Analytics"
+date: "`r Sys.time()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(magrittr)
+library(lubridate)
+library(stringr)
+library(DBI)
+library(ignyt)
+
+```
+```{r sql_con}
+con <- ignyt::analytics_sql_con()
+```
+```{sql, connection=con, output.var="abd_ct"}
+SELECT t1.[Accession Number], t1.[Exam Completed], t1.[Exam Code], t1.[Exam Description], t1.[Protocol Description], t1.Service, t1.Modality, t1.[Body Site]
+FROM RISdb t1
+LEFT JOIN pacs.oc t2
+ON t1.[Accession Number] = t2.[Accession Number]
+WHERE t2.oc IS NULL
+AND t1.Modality IN ('CT', 'PT')
+AND t1.[Activity Status Code] = 'C'
+AND (t1.[Body Site] LIKE '%ABDOMEN%' OR t1.[Body Site] LIKE '%CAP%' OR t1.[Body Site] LIKE '%WHOLE%')
+AND t1.[Exam Completed] BETWEEN DATEADD(minute, -240, GETDATE()) AND DATEADD(minute, -5, GETDATE())
+AND t1.[Exam Description] NOT LIKE 'FOREIGN%'
+AND t1.[Exam Description] NOT LIKE 'FORFILE%';
+```
+```{r pacs}
+if (nrow(abd_ct) == 0) {
+  dbDisconnect(con)
+  knit_exit()
+} else {
+  ignyt::pacs_http_login()
+  abd_ct %<>% left_join(
+    ignyt::pacs_parse_notes(abd_ct$`Accession Number`, "oc"),
+    by = c("Accession Number" = "accesionNum")
+  ) %>%
+    mutate(
+      oc_prot = as.numeric(str_detect(`Protocol Description`, "Oral[\\w ]+[Cc]ontrast")),
+      oc_note = note,
+      oc = case_when(
+        note == "Present" ~ "Present",
+        note == "None" ~ "None",
+        str_detect(`Protocol Description`, "Oral[\\w ]+[Cc]ontrast") ~ "Present",
+        str_detect(`Protocol Description`, "No Oral") ~ "None",
+        note == "Missing" ~ "Missing"
+      )
+    ) %>%
+    distinct(`Accession Number`, .keep_all = TRUE) %>% 
+    filter(!is.na(oc))
+  
+  if(nrow(abd_ct) == 0) {
+    dbDisconnect(con)
+    knit_exit()
+  }
+  
+}
+```
+```{r ps}
+ignyt::dictation_sys_auth()
+sql_out <- abd_ct %>%
+  filter(oc %in% c("None", "Present", "Missing")) %>% 
+  select(`Accession Number`, oc) %>%
+  ignyt::set_oc() %>%
+  select(-oc) %>%
+  left_join(abd_ct, by = "Accession Number") %>%
+  filter(!is.na(oc_set))
+if (nrow(sql_out) > 0) {
+sql_out %<>% select(
+    `Accession Number`,
+    pacs_ncd = ncd, ps_orderid,
+    oc_prot, oc_note, oc, ps_resp = oc_set
+  ) %>% 
+    mutate(ps_resp = as.numeric(ps_resp))
+} else {
+  dbDisconnect(con)
+  knit_exit()
+}
+dict_sys_deauth()
+```
+```{r sql_log}
+dbAppendTable(con, SQL("pacs.oc"), sql_out)
+accnos <- paste(sql_out$`Accession Number`, collapse = "', '")
+DBI::dbExecute(
+  con,
+  SQL(glue::glue(
+    "UPDATE pacs.oc
+     SET ps_timestamp = getdate()
+     WHERE [Accession Number] IN ('{accnos}');"
+  ))
+)
+dbDisconnect(con)
+kable(sql_out)
+```

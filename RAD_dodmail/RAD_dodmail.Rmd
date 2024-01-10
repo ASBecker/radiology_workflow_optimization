@@ -1,0 +1,115 @@
+---
+title: "Daily DODmail"
+author: "Radiology Analytics"
+date: "`r Sys.time()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ignyt)
+library(magrittr)
+library(dplyr)
+library(glue)
+library(tidyr)
+library(DBI)
+library(knitr)
+library(stringr)
+library(mskRmail)
+source("dodmail_htmlbody.R")
+```
+```{r con, include=FALSE}
+con <- ignyt::analytics_sql_con()
+```
+```{sql, connection=con, output.var="dods"}
+SELECT * 
+FROM MainDB.QGenda_Schedule
+WHERE cast(schedule_date as date) = cast(getdate() as date)
+AND (task_name LIKE '%DOD%' OR task_name LIKE '%LATE%' OR task_name LIKE '%Early%')
+AND NOT task_name LIKE 'Emergency%'
+```
+```{r dod_addresses}
+DBI::dbDisconnect(con)
+zzPDLs <- tibble::tribble(
+  ~site, ~task_early, ~task_am, ~task_pm, ~task_late, ~cc,
+  "BER", "BER - Early", "BER - DOD am", "BER - DOD pm|BER - DOD mid-PM", "BER - Late", "recipient_BER@hospital.com",
+  "53", NA, "DOD 53 am", "DOD 53 pm", "Late 53", c("recipient1_53@hospital.com", "recipient2_53@hospital.com"),
+  "35", NA, "DOD 35 am", "DOD 35 pm", "Late 35", "recipient_35@hospital.com",
+  "26", NA, "DOD 26 am", "DOD 26 pm", "26 Late|Late 26", "recipient_26@hospital.com"
+)
+
+```
+```{r wrangling}
+
+dods %<>% mutate(email = if_else(!is.na(email), email, `QGenda Email`))
+
+to_mail <- left_join(
+  zzPDLs,
+  dods,
+  by = c("task_am" = "task_name")
+) %>%
+  mutate(
+    to = email,
+    dod_am = `QGenda Abbrev`
+  ) %>% 
+  select(-c(email, `QGenda Abbrev`)) %>% 
+  fuzzyjoin::regex_right_join(
+    dods[, c("task_name", "MSKCC Email", "QGenda Abbrev")],
+    .,
+    by = c(task_name = "task_pm")
+  ) %>% 
+  mutate(
+    .,
+    dod_pm = `QGenda Abbrev`,
+    dod_pm = replace_na(dod_pm, "<mark>Missing entry, check QGenda</mark>"),
+    email = replace_na(email, ""),
+    cc = if_else(!str_detect(dod_pm, "Missing"), purrr::pmap(select(., cc, email), c), cc)
+  ) %>% 
+  select(-c(email, `QGenda Abbrev`, task_name)) %>% 
+  fuzzyjoin::regex_right_join(
+    dods[, c("task_name", "MSKCC Email", "QGenda Abbrev")],
+    .,
+    by = c(task_name = "task_late")
+  ) %>%
+  mutate(
+    .,
+    dod_late = `QGenda Abbrev`,
+    dod_late = replace_na(dod_late, "<mark>Missing entry, check QGenda</mark>"),
+    email = replace_na(email, ""),
+    bcc = "mail_bot@hospital.com",
+    cc = if_else(dod_pm != dod_late & !str_detect(dod_late, "Missing"), purrr::pmap(select(., cc, email), c), cc)
+  ) %>% 
+  select(-c(email, `QGenda Abbrev`, task_name)) %>% 
+  mutate(subject = glue("DOD {site} {Sys.Date()}"))
+
+if(any(dods$task_name == "BER - Early")) {
+  to_mail %<>% fuzzyjoin::regex_right_join(
+    dods[, c("task_name", "MSKCC Email", "QGenda Abbrev")],
+    .,
+    by = c("task_name" = "task_early")
+  ) %>%
+  mutate(
+    dod_early = `QGenda Abbrev`,
+    bcc = "mail_bot@hospital.com",
+    cc = ifelse(!is.na(email), purrr::pmap(select(., cc, to), c), cc),
+    to = ifelse(!is.na(email), email, to)
+  ) %>% 
+  select(-c(email, `QGenda Abbrev`, -task_name))
+} else {
+  to_mail %<>% mutate(dod_early = NA)
+}
+
+
+to_mail$body <- purrr::pmap_chr(to_mail[, c("dod_am", "dod_pm", "dod_late")], make_body)
+to_mail[which(to_mail$site == "BER"), ]$body <- purrr::pmap_chr(
+  to_mail[which(to_mail$site == "BER"), c("dod_early", "dod_am", "dod_pm", "dod_late")],
+  make_body_regional
+  )
+send_now <- lubridate::hour(Sys.time()) == 7
+```
+```{r mail, eval=send_now}
+send_emails(to_mail, alias = "mail_bot@hospital.com")
+to_mail %>% 
+  select(site, dod_early, dod_am, to, dod_pm, dod_late) %>% 
+  knitr::kable()
+```

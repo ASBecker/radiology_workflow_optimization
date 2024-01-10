@@ -1,0 +1,136 @@
+---
+title: "Who is reading today?"
+author: "Only updates on weekdays"
+date: "`r Sys.time()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(magrittr)
+library(ignyt)
+library(DT)
+```
+
+```{r prep, include=FALSE}
+raw <- ignyt::prep_readers() 
+all <- raw  %>% filter(
+    str_detect(task_name, "am|pm"),
+    task_name %in% (ignyt:::min_exams %>% filter(!is.na(min_exams)) %>% pull(task_name)),
+    !str_detect(task_name, "DOD|DMT|ADR|Off")
+    ) %>% 
+  mutate(shift = str_extract(task_name, "am|pm"))
+
+dods <- raw %>% 
+  filter(str_detect(task_name, "DOD")) %>% 
+  mutate(shift = str_extract(task_name, "am|pm"))
+
+bolden_rectal_dod <- function (x) {
+  rod <- switch(
+    as.character(wday(today())),
+    "2" = c("Doc A", "Doc B"),
+    "3" = "Doc C",
+    "4" = "Doc D", 
+    "5" = "Doc E",
+    "6" = "Doc F"
+    )
+  z <- sapply(x, function(y) if(y %in% rod) paste0("<b>",y,"</b>") else y)
+}
+
+dmt_lut <- c(
+  "gu" = "Genitourinary (Kidney, Bladder, Prostate, ...)",
+  "gyn" = "Gynecological (Ovary, Uterus, Cervix ...)",
+  "lymphoma" = "Lymphoma",
+  "breast" = "Breast",
+  "bone" = "Bone (Sarcomas, Musculoskeletal, ...)",
+  "diep" = "DIEP (dedicated protocols before flap plasty)",
+  "myeloma" = "Multiple Myeloma",
+  "gastric_mixed" = "Gastric and Mixed tumors (GIST, abdominopelvic sarcomas, ...)",
+  "rectal" = "Rectal/anal cancer",
+  "chest" = "Chest (lung cancer, mediastinal tumors, ...)",
+  "cardiac" = "Cardiac",
+  "vascular" = "Vascular (run-off protocols)",
+  "hpb" = "Hepato-pancreatico-biliary (HCC, liver, pancreas, ...)",
+  "iron_quant" = "Liver iron quantification protocol",
+  "melanoma" = "Melanoma",
+  "peds" = "Pediatric",
+  "thyroid" = "Thyroid",
+  "gastric" = "Gastric cancer",
+  "esophageal" = "Esophageal cancer",
+  "syndromes" = "Syndromes (dedicated whole-body MRIs)",
+  "general" = "General (includes venograms)"
+)
+
+weekday_no_holiday <- wday(today()) %in% 2:6 & !today() %in% ignyt::get_holidays()$date
+
+if(weekday_no_holiday){
+  all_ct <- all %>% 
+    left_join(ignyt:::fac_dmts_ct, by = "Name") %>% 
+    mutate(
+      dmt.1 = ifelse(is.na(dmt.1), "general", dmt.1),
+      nj.license = ifelse(nj.license=="NJ", "NJ & NY", "<u>Only NY</u>")
+      ) %>% 
+    filter(!is.na(mod))
+  all_mr <- all %>% 
+    left_join(ignyt:::fac_dmts_mr, by = "Name") %>% 
+    filter(!is.na(dmt.0) | !is.na(dmt.1)) %>%
+    filter(Name != "Price") %>% 
+    mutate(nj.license = ifelse(nj.license=="NJ", "NJ & NY", "<u>Only NY</u>"))
+}
+
+display_by_dmt <- function(df, sel_shift, CT=TRUE){
+  df %>% 
+    filter(shift == sel_shift) %>%
+    mutate(task_name = ifelse(Name %in% pull(filter(dods, shift == sel_shift), Name), paste0(task_name, " <b>(DOD)</b>"), task_name)) %>% 
+    select(`Name`, email, task_name, nj.license, dmt.1:dmt.4) %>% 
+    pivot_longer(dmt.1:dmt.4) %>% 
+    filter(!is.na(value)) %>% 
+    select(-name) %>% 
+    {if(CT) . else mutate(., `Name` = ifelse(value=="rectal", bolden_rectal_dod(`Name`), `Name`))} %>% 
+    group_by(value) %>% 
+    nest() %>% 
+    mutate(Radiologists = map_chr(data, function(x) paste(apply(x, 1, paste, collapse = ", "), collapse = "<br/>"))) %>% 
+    select(-data) %>% 
+    rename(DMT = value) %>%
+    arrange(DMT) %>%
+    mutate(DMT = dmt_lut[DMT]) %>% 
+    DT::datatable(options = list(pageLength = 100), escape = FALSE)
+}
+
+```
+
+## List of readers {.tabset}
+
+Don't forget to `r htmltools::a("log out", href = "/__logout__")` when on a shared workstation.
+
+### CT
+
+#### AM
+
+```{r ct_am, echo=FALSE, eval=weekday_no_holiday}
+all_ct %>% display_by_dmt(sel_shift = "am")
+```
+
+#### PM
+
+```{r ct_pm, echo=FALSE, eval=weekday_no_holiday}
+all_ct %>% display_by_dmt(sel_shift = "pm")
+```
+
+
+### MR
+
+#### AM
+
+```{r mr_am, echo=FALSE, eval=weekday_no_holiday}
+all_mr %>% display_by_dmt(sel_shift = "am", CT = FALSE)
+```
+
+#### PM
+
+```{r mr_pm, echo=FALSE, eval=weekday_no_holiday}
+all_mr %>% display_by_dmt(sel_shift = "pm", CT = FALSE) 
+```
+

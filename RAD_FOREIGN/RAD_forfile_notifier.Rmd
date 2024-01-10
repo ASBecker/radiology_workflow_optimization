@@ -1,0 +1,110 @@
+---
+title: "Forfile conversion e-mail notifier"
+author: "Radiology Analytics"
+date: "Last run: `r Sys.time()`"
+output: html_document
+---
+
+```{r setup, context="setup", include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(magrittr)
+library(lubridate)
+library(stringr)
+library(tidyr)
+library(DBI)
+library(glue)
+
+library(ignyt)
+library(mskRmail)
+
+source("email_body.R")
+
+con <- ignyt::analytics_sql_con()
+```
+
+# Summary {.tabset}
+
+## SQL
+
+```{sql sql_new_exams, connection=con, output.var="new_foreigns"}
+SELECT t1.[Case ID (Main)], t1.MRN, t1.[Accession Number], t1.[Scheduled Date], t1.[Begin Date], t1.[Exam Description], t2.email_timestamp, t1.[Patient Name]
+FROM RISdb t1
+LEFT JOIN ignyt.[foreign] t2
+ON t1.[Accession Number] = t2.[Accession Number]
+WHERE t2.[Case ID (Main)] IS NULL
+AND cast(t1.[Scheduled Date] as date) BETWEEN cast(getdate()-90 as date) AND cast(getdate() as date)
+AND CHARINDEX('FOREIGN', t1.[Exam Description]) > 0
+AND t1.[Activity Status Code] NOT IN ('X', 'F')
+AND (t1.MRN IS NOT NULL OR t1.[Patient Name] IS NOT NULL);
+```
+```{r update_db}
+dbAppendTable(con, SQL("ignyt.[foreign]"), new_foreigns)
+```
+```{sql delete_old, connection=con}
+DELETE t2
+FROM ignyt.[foreign] t2
+LEFT JOIN RISdb t1
+ON t1.[Case ID (Main)] = t2.[Case ID (Main)]
+WHERE (t1.[Activity Status Code] IN ('X', 'F') OR cast(t1.[Exam Completed] as date) < cast(getdate()-180 as date))
+AND t2.email_timestamp IS NOT NULL;
+```
+```{sql sql_conversions, connection=con, output.var="ff_conv"}
+SELECT t2.[Case ID (Main)], t2.[Accession Number], t2.[Scheduled Date], t2.[Begin Date], t2.[Exam Description], t1.[Referring Physician Email], t2.[MRN], t1.[Reason Desc], t2.[Patient Name]
+FROM RISdb t1
+LEFT JOIN ignyt.[foreign] t2
+ON t1.[Accession Number] = t2.[Accession Number]
+WHERE t2.[Accession Number] IS NOT NULL
+AND t2.email_timestamp IS NULL
+AND CHARINDEX('FORFILE', t1.[Exam Description]) > 0
+AND t1.[Exam Completed] < DATEADD(HOUR, -1, GETDATE());
+```
+
+## mskRmail
+
+```{r send_mails, eval=nrow(ff_conv)>0}
+ff_nested <- ff_conv %>% 
+  mutate(
+    `Referring Physician Email` = replace_na(`Referring Physician Email`, "filmlibrary@hospital.com"),
+    `Reason Desc` = replace_na(`Reason Desc`, "No reason indicated"),
+    `Reason Desc` = str_replace(`Reason Desc`, "FL ", "")
+    ) %>%
+  select(
+    -c(`Case ID (Main)`, `Scheduled Date`, `Begin Date`), 
+    Reason = `Reason Desc`
+    ) %>% 
+  nest(data = c(MRN, `Patient Name`, `Accession Number`, `Exam Description`, Reason)) %>% 
+  select(to = `Referring Physician Email`, data) %>% 
+  mutate(
+    subject = "Notice: Automatic ForFile Conversion",
+    bcc = ifelse(to!="filmlibrary@hospital.com", "mail_bot@hospital.com", "another_recipient@hospital.com"),
+    body = ifelse(to!="filmlibrary@hospital.com", purrr::map_chr(data, email_body), purrr::map_chr(data, email_body_filmlib))
+  )
+
+mskRmail::send_emails(ff_nested, alias = "mail_bot@hospital.com")
+```
+```{r update_foreign_table, eval=nrow(ff_conv)>0}
+ff_conv %>% 
+  pull(`Accession Number`) %>% 
+  paste(collapse = "', '") %>% 
+  sprintf(
+  "UPDATE ignyt.[foreign]
+   SET email_timestamp = getdate(),
+       [Accession Number] = '11111111'
+   WHERE [Accession Number] IN ('%s');", .
+  ) %>% 
+  SQL() %>% 
+  dbExecute(con, .)
+```
+
+## Summary {.active}
+
+```{r summary_table, eval=nrow(ff_conv)>0, echo=FALSE}
+ff_nested %>% 
+  select(-body) %>%
+  unnest() %>%
+  mutate(email_timestamp = now()) %>%
+  knitr::kable()
+invisible(dbDisconnect(con))
+```

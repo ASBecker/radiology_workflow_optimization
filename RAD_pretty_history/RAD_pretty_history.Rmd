@@ -1,0 +1,81 @@
+---
+title: "RAD_pretty_history"
+author: "Radiology Analytics"
+date: "`r Sys.time()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(odbc)
+library(DBI)
+library(dplyr)
+library(ignyt)
+library(magrittr)
+library(stringr)
+
+con <- analytics_sql_con()
+
+source("pretty_history.R")
+```
+```{sql, connection=con, output.var="sel_db"}
+select MRN, mainDB.RISdb.[Accession Number], dob, [Patient Status], [Patient Location], [Date Exam Scheduled (Created)], [Begin Date], [Exam Completed], [Transcription Date], [Finalized Date], Modifier, [Exam Code], [Exam Description], [Protocol Description], History, Diagnosis, [Admit Commments], [Referring Physician], Service, Modality, [Body Site], [Fellow/Resident], Radiologist
+FROM mainDB.RISdb
+LEFT JOIN [analytics].[pretty_history] ON [analytics].[pretty_history].[Accession Number]=mainDB.RISdb.[Accession Number]
+WHERE [analytics].[pretty_history].[Accession Number] IS NULL
+AND (
+(cast([Exam Completed] as date) between cast(getdate()-91 as date) and cast(getdate() as date) OR cast([Begin Date] as date) = cast(getdate() as date))
+AND [Activity Status Code] in ('I', 'C')
+);
+```
+
+```{r string_manip_and_ps}
+sel_db %<>% distinct(`Accession Number`, .keep_all = TRUE) %>% 
+  pretty_history() %>% 
+  filter(!hx %in% c("", "NA.", ".")) %>%
+  filter(!str_detect(`Exam Description`, "FORFILE"))
+
+sql_out <- sel_db %>% 
+  select(`Accession Number`, hx) %>% 
+  distinct(`Accession Number`, .keep_all = TRUE)
+
+if(nrow(sql_out) > 2000) stop("Too many records. Shutting down to protect PS API.")
+
+if(nrow(sql_out) > 0) {
+  ps_auth()
+  sql_out %<>% ps_set_oc("History")
+  ps_close()
+  sql_out %<>% filter(oc_set) %>% 
+    select(-oc_set)
+}
+```
+
+```{r sql_log, eval=nrow(sql_out)>0}
+dbAppendTable(con, SQL("analytics.pretty_history"), sql_out)
+accnos <- paste(sql_out$`Accession Number`, collapse = "', '")
+dbExecute(
+  con,
+  SQL(glue::glue(
+    "UPDATE analytics.pretty_history
+     SET ps_timestamp = getdate()
+     WHERE [Accession Number] IN ('{accnos}');"
+  ))
+)
+dbExecute(
+  con,
+  SQL("WITH CTE([Accession Number],
+    DuplicateCount)
+AS (SELECT [Accession Number],
+           ROW_NUMBER() OVER(PARTITION BY [Accession Number]
+           ORDER BY [Accession Number]) AS DuplicateCount
+    FROM [analytics].[pretty_history])
+DELETE FROM CTE
+WHERE DuplicateCount > 1;")
+)
+dbDisconnect(con)
+sel_db %>%
+  filter(`Accession Number` %in% sql_out$`Accession Number`) %>% 
+  select(`Accession Number`, `Exam Description`, History, Diagnosis, `Admit Commments`, hx) %>% 
+  knitr::kable()
+```
