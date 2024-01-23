@@ -54,7 +54,7 @@ to_mail <- left_join(
   ) %>% 
   select(-c(email, `QGenda Abbrev`)) %>% 
   fuzzyjoin::regex_right_join(
-    dods[, c("task_name", "MSKCC Email", "QGenda Abbrev")],
+    dods[, c("task_name", "Hospital Email", "QGenda Abbrev")],
     .,
     by = c(task_name = "task_pm")
   ) %>% 
@@ -67,7 +67,7 @@ to_mail <- left_join(
   ) %>% 
   select(-c(email, `QGenda Abbrev`, task_name)) %>% 
   fuzzyjoin::regex_right_join(
-    dods[, c("task_name", "MSKCC Email", "QGenda Abbrev")],
+    dods[, c("task_name", "Hospital Email", "QGenda Abbrev")],
     .,
     by = c(task_name = "task_late")
   ) %>%
@@ -84,7 +84,7 @@ to_mail <- left_join(
 
 if(any(dods$task_name == "BER - Early")) {
   to_mail %<>% fuzzyjoin::regex_right_join(
-    dods[, c("task_name", "MSKCC Email", "QGenda Abbrev")],
+    dods[, c("task_name", "Hospital Email", "QGenda Abbrev")],
     .,
     by = c("task_name" = "task_early")
   ) %>%
