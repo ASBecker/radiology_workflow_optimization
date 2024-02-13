@@ -1,0 +1,14 @@
+TY  - JOUR
+AU  - Becker, Anton S.
+AU  - Chaim, Joshua
+AU  - Vargas, Hebert Alberto
+PY  - 2024
+DA  - 2024/02/13
+TI  - Streamlining Radiology Workflows Through the Development and Deployment of Automated Microservices
+JO  - Journal of Imaging Informatics in Medicine
+AB  - Microservices are a software development approach where an application is structured as a collection of loosely coupled, independently deployable services, each focusing on executing a specific purpose. The development of microservices could have a significant impact on radiology workflows, allowing routine tasks to be automated and improving the efficiency and accuracy of radiologic tasks. This technical report describes the development of several microservices that have been successfully deployed in a tertiary cancer center, resulting in substantial time savings for radiologists and other staff involved in radiology workflows. These microservices include the automatic generation of shift emails, notifying administrative staff and faculty about fellows on rotation, notifying referring physicians about outside examinations, and populating report templates with information from PACS and RIS. The report outlines the common thought process behind developing these microservices, including identifying a problem, connecting various APIs, collecting data in a database, writing a prototype and deploying it, gathering feedback and refining the service, putting it in production, and identifying staff who are in charge of maintaining the service. The report concludes by discussing the benefits and challenges of microservices in radiology workflows, highlighting the importance of multidisciplinary collaboration, interoperability, security, and privacy.
+SN  - 2948-2933
+UR  - https://doi.org/10.1007/s10278-024-01034-9
+DO  - 10.1007/s10278-024-01034-9
+ID  - Becker2024
+ER  - 

@@ -1,10 +1,10 @@
 # Microservices for Radiology Workflow Optimization
 
-This repository contains the source code for several microservices designed to optimize radiology workflow processes. They contribute to efficiency improvements, reduce the likelihood of errors, and save time in daily operations. The microservices are developed to automate tasks related to email notifications, content delivery, and data management across multiple sources.
+This repository contains the source code for several microservices designed to optimize radiology workflow processes. They contribute to efficiency improvements, reduce the likelihood of errors, and save time in daily operations. The microservices are developed to automate tasks related to email notifications, content delivery, and data management across multiple sources. The corresponding article has been published in the [Journal of Imaging Informatics in Medicine](https://link.springer.com/article/10.1007/s10278-024-01034-9). Bibliographic information is available in this repository in .RIS and bibTeX format.
 
 ## Microservices Overview
 
-As described in the corresponding paper:
+As described in the [corresponding paper](https://doi.org/10.1007/s10278-024-01034-9):
 
 1.  **E-Mail Notifications**: Automates the task of sending an email to the relevant staff members (RAD_mr_fellows, RAD_dodmail, RAD_FOREIGN).
     
@@ -31,7 +31,7 @@ git clone https://github.com/ASBecker/Microservices-for-Radiology-Workflow-Optim
 cd Microservices-for-Radiology-Workflow-Optimization
 ```
 
-3.  Modify the code to suit your department's specific operations
+3.  Modify to suit your or your department's specific operational needs
 
 ## License
 
